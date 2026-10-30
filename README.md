@@ -55,6 +55,12 @@ for rank in phylum family genus; do
         "figures/quality_by_${rank}_dark.png" \
         "figures/quality_by_$rank.csv"
 done
+
+python3 scripts/plot_score_vs_size.py \
+    data/SHD_bins_MIMAG_report.csv \
+    figures/score_vs_size.png \
+    figures/score_vs_size_dark.png \
+    figures/score_vs_size.csv
 ```
 
 ## MAG recovery per dog
@@ -122,3 +128,33 @@ high-quality share widens sharply as you go down the tree:
 
 Phylum-level aggregation hides most of it. If you need a quality expectation for
 a lineage, take it from the genus table, not the phylum one.
+
+## Quality score against genome size
+
+![CheckM2 quality score against assembled genome size, one dot per MAG](figures/score_vs_size.png)
+
+Quality score here is the usual CheckM2 penalty, `Completeness - 5 ×
+Contamination`, so 100 means complete and uncontaminated. One dot per MAG, no
+subsetting.
+
+Across the whole set score and size track weakly (r = 0.27), but that is
+mechanical rather than biological: an incomplete MAG assembles shorter, and
+completeness is most of the score. The medium-quality MAGs are both smaller and
+lower-scored (median 2.35 Mb / 66.5) than the high-quality ones (2.76 Mb /
+96.0), and that gap between the two groups is where nearly all of the
+correlation comes from.
+
+**Within the high-quality MAGs the relationship is flat** — r = 0.04, and median
+score by size quintile goes 96.4 / 95.9 / 95.4 / 95.4 / 97.0 from the smallest
+fifth to the largest. So once a genome is past 90% complete, its size tells you
+nothing about how good the bin is, and a size filter is not a quality filter.
+
+Two things to read off the shape rather than the statistics: the hard ceiling at
+100 (41% of all MAGs score ≥ 95, so the top band is saturated — use
+`score_vs_size.csv` if you need density inside it), and the sparse bottom-left,
+where small *and* bad is rare — the worst bins are mostly normal-sized genomes
+carrying contamination, like the 7.8-scoring Bacillota_A at 9.2%.
+
+The dots are deliberately **not** coloured by the `Quality` column: that column
+is derived from completeness and contamination, so colouring by it would spend
+the identity channel redrawing a threshold the y position already shows.
