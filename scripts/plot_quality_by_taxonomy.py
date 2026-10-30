@@ -1,8 +1,15 @@
-"""Stacked bar chart: MAG quality tiers broken down by GTDB phylum.
+"""Stacked bar chart: MAG quality tiers broken down by a GTDB taxonomic rank.
+
+    python3 scripts/plot_quality_by_taxonomy.py <csv> <rank> <light.png> <dark.png> <table.csv>
 
 Two panels on one ordering: absolute counts (left) and quality share (right).
-The phylum counts span 1,460 down to 1, so the rare phyla are sub-pixel in the
+Counts at every rank are heavily lopsided, so the rare taxa are sub-pixel in the
 count panel; the share panel is what makes their composition readable.
+
+Below the rank of phylum the tail is long and a share computed on three MAGs is
+noise, so each rank has a documented minimum-n cut (see RANKS) and the chart
+shows only taxa that clear it. The CSV always holds every taxon at that rank, so
+the omitted ones are reported rather than lost.
 
 Quality is ordinal (high > medium), so it takes the same single-hue blue ramp as
 plot_quality_by_sample.py, checked with the dataviz validator in ordinal mode on
@@ -10,6 +17,7 @@ both surfaces. The light step sits at 2.06:1, below the 3:1 mark floor, so the
 chart ships the required relief channel: direct share labels plus the CSV table.
 """
 import sys
+import textwrap
 
 import matplotlib
 matplotlib.use("Agg")
@@ -18,7 +26,19 @@ import pandas as pd
 from matplotlib.patches import PathPatch, Rectangle
 from matplotlib.path import Path
 
-CSV, OUT_LIGHT, OUT_DARK, OUT_TABLE = sys.argv[1:5]
+CSV, RANK, OUT_LIGHT, OUT_DARK, OUT_TABLE = sys.argv[1:6]
+
+# GTDB lineages are a fixed seven-field string, so the rank is a column index.
+RANKS = {
+    "phylum": dict(field=1, prefix="p__", min_n=1),
+    "class":  dict(field=2, prefix="c__", min_n=5),
+    "order":  dict(field=3, prefix="o__", min_n=5),
+    "family": dict(field=4, prefix="f__", min_n=10),
+    "genus":  dict(field=5, prefix="g__", min_n=20),
+}
+if RANK not in RANKS:
+    sys.exit(f"rank must be one of {', '.join(RANKS)}")
+spec = RANKS[RANK]
 
 THEME = {
     "light": dict(surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", muted="#898781",
@@ -32,25 +52,79 @@ THEME = {
 GAP_PX = 2.0      # surface gap between touching segments
 RADIUS_PX = 4.0   # rounded data-end, square at the baseline
 MAX_BAR_PX = 24.0
+FIG_W = 13.0
+CHROME_BOT_IN = 0.78     # x label + source line
+SUB_WRAP = 178           # subtitle characters per line at 8.5pt over FIG_W
+SUB_LINE_IN = 0.16
+TICK_STEPS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500]
 
 df = pd.read_csv(CSV)
-phylum = (df["Classification"].str.split(";", expand=True)[1]
-            .str.replace("p__", "", regex=False))
+taxon = (df["Classification"].str.split(";", expand=True)[spec["field"]]
+           .str.replace(spec["prefix"], "", regex=False)
+           .replace("", "(unassigned)"))
 
-counts = (df.assign(Phylum=phylum)
-            .pivot_table(index="Phylum", columns="Quality", values="Bin ID",
-                         aggfunc="count")
-            .fillna(0).astype(int)
-            .rename(columns={"high-quality": "high", "medium-quality": "medium"}))
-counts["total"] = counts.high + counts.medium
-counts["high_pct"] = 100 * counts.high / counts.total
-counts = counts.sort_values("total", ascending=False)
-counts.round(1).to_csv(OUT_TABLE)
+allcounts = (df.assign(Taxon=taxon)
+               .pivot_table(index="Taxon", columns="Quality", values="Bin ID",
+                            aggfunc="count")
+               .fillna(0).astype(int)
+               .rename(columns={"high-quality": "high", "medium-quality": "medium"}))
+allcounts["total"] = allcounts.high + allcounts.medium
+allcounts["high_pct"] = 100 * allcounts.high / allcounts.total
+allcounts = allcounts.sort_values("total", ascending=False)
+allcounts.index.name = RANK.capitalize()
+allcounts["plotted"] = allcounts.total >= spec["min_n"]
+allcounts.round(1).to_csv(OUT_TABLE)
 
-# Plotted top-to-bottom in rank order, so the largest phylum sits at the top.
+counts = allcounts[allcounts.plotted]
+dropped = allcounts[~allcounts.plotted]
+
+# Plotted top-to-bottom in rank order, so the largest taxon sits at the top.
 rows = counts.iloc[::-1]
 n = len(rows)
 xmax = int(counts.total.max())
+step = next(s for s in TICK_STEPS if xmax / s <= 7)
+
+PLURAL = {"phylum": "phyla", "class": "classes", "order": "orders",
+          "family": "families", "genus": "genera"}
+
+
+def subtitle():
+    head = (f"{len(df):,} dog gut MAGs across {len(allcounts)} GTDB "
+            f"{PLURAL[RANK]}, ranked by total recovered.")
+    renorm = (f"The right panel renormalises each {RANK} to show how its "
+              "quality splits.")
+    if len(dropped) == 0:
+        return (f"{head} Counts are dominated by {counts.index[0]}, so "
+                f"{renorm[0].lower()}{renorm[1:]}")
+    shown = int(counts.total.sum())
+    return (f"{head} The {len(dropped)} {PLURAL[RANK]} with fewer than "
+            f"{spec['min_n']} MAGs are omitted - a share computed on a handful "
+            f"of genomes is noise - leaving {shown:,} MAGs "
+            f"({100 * shown / len(df):.0f}%) on the chart. {renorm}")
+
+
+def widest_label_in(labels, fontsize, dpi=200):
+    """Width of the longest rendered label, in inches - measured, not guessed.
+
+    Taxon names run to 23 characters at genus level, so a fixed left margin
+    silently clips them; the mark spec forbids a clipped label.
+    """
+    probe = plt.figure(figsize=(1, 1), dpi=dpi)
+    renderer = probe.canvas.get_renderer()
+    widest = max(probe.text(0, 0, s, fontsize=fontsize)
+                 .get_window_extent(renderer=renderer).width for s in labels)
+    plt.close(probe)
+    return widest / dpi
+
+
+# Floor keeps the shallow ranks on the same margin they were tuned at.
+LEFT_IN = max(1.456, widest_label_in(rows.index, 8.5) + 0.18)
+
+SUBTITLE = textwrap.wrap(subtitle(), SUB_WRAP)
+# One subtitle line is the baseline height; each extra line grows the header.
+CHROME_TOP_IN = 1.00 + SUB_LINE_IN * (len(SUBTITLE) - 1)
+plot_h = n * (0.33 if n <= 12 else 0.17)
+FIG_H = plot_h + CHROME_TOP_IN + CHROME_BOT_IN
 
 
 def rounded_end(ax, xl, xr, yb, yt, r_px, color):
@@ -103,26 +177,25 @@ def style(ax, c, xlim, ticks, labels, xlabel, show_names):
 def render(mode, outfile):
     c = THEME[mode]
     fig, (axc, axs) = plt.subplots(
-        1, 2, figsize=(13, 5.4), dpi=200, sharey=True,
+        1, 2, figsize=(FIG_W, FIG_H), dpi=200, sharey=True,
         gridspec_kw=dict(width_ratios=[1.0, 0.82], wspace=0.06))
     fig.patch.set_facecolor(c["surface"])
     for ax in (axc, axs):
         ax.set_facecolor(c["surface"])
 
-    style(axc, c, xmax * 1.03, range(0, xmax + 1, 250),
-          [f"{v:,}" for v in range(0, xmax + 1, 250)],
+    ticks = range(0, xmax + 1, step)
+    style(axc, c, xmax * 1.03, ticks, [f"{v:,}" for v in ticks],
           "MAGs recovered", show_names=True)
     style(axs, c, 118, range(0, 101, 25), [f"{v}%" for v in range(0, 101, 25)],
           "Share of MAGs in each quality tier", show_names=False)
 
-    fig.text(0.052, 0.955, "Genome quality by phylum",
+    fig.text(0.052, 1 - 0.243 / FIG_H, f"Genome quality by {RANK}",
              fontsize=13.5, color=c["ink"], weight="bold", ha="left", va="top")
-    fig.text(0.052, 0.900,
-             f"{len(df):,} dog gut MAGs across {n} GTDB phyla, ranked by total "
-             "recovered. Counts are dominated by Bacillota_A, so the right panel "
-             "renormalises each phylum to show how its quality splits.",
-             fontsize=8.5, color=c["ink2"], ha="left", va="top")
-    fig.subplots_adjust(left=0.112, right=0.995, top=0.815, bottom=0.145)
+    fig.text(0.052, 1 - 0.540 / FIG_H, "\n".join(SUBTITLE), fontsize=8.5,
+             color=c["ink2"], ha="left", va="top", linespacing=1.5)
+    fig.subplots_adjust(left=LEFT_IN / FIG_W, right=0.995,
+                        top=1 - CHROME_TOP_IN / FIG_H,
+                        bottom=CHROME_BOT_IN / FIG_H)
     fig.canvas.draw()
 
     # Layout is fixed now, so pixel-based specs can be converted to data units.
@@ -159,10 +232,10 @@ def render(mode, outfile):
     for txt in leg.get_texts():
         txt.set_color(c["ink2"])
 
-    fig.text(0.052, 0.022,
+    fig.text(0.052, 0.119 / FIG_H,
              "Source: SHD_bins_MIMAG_report.csv  ·  high-quality = >90% complete "
-             "and <5% contamination  ·  per-phylum counts in "
-             "quality_by_taxonomy.csv",
+             f"and <5% contamination  ·  counts for every {RANK}, plotted or not, "
+             f"in {OUT_TABLE.rsplit('/', 1)[-1]}",
              fontsize=7, color=c["muted"], ha="left", va="bottom")
 
     fig.savefig(outfile, dpi=fig.dpi, facecolor=c["surface"])
@@ -172,6 +245,11 @@ def render(mode, outfile):
 
 px_y, bar_px = render("light", OUT_LIGHT)
 render("dark", OUT_DARK)
-print(f"slot height {px_y:.1f}px -> bar {bar_px:.1f}px (cap {MAX_BAR_PX:.0f})")
-print(f"phyla={n} xmax={xmax} total={int(counts.total.sum())}")
-print(counts.round(1).to_string())
+print(f"rank={RANK} plotted={n}/{len(allcounts)} "
+      f"MAGs={int(counts.total.sum())}/{len(df)} xmax={xmax} step={step}")
+print(f"figure {FIG_W}x{FIG_H:.2f}in  slot {px_y:.1f}px -> bar {bar_px:.1f}px "
+      f"(cap {MAX_BAR_PX:.0f})")
+print(counts.drop(columns="plotted").round(1).to_string())
+if len(dropped):
+    print(f"omitted ({len(dropped)} {PLURAL[RANK]}, {int(dropped.total.sum())} MAGs, "
+          f"{int(dropped.high.sum())} high-quality)")
