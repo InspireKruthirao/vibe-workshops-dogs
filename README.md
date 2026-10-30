@@ -40,12 +40,18 @@ python3 scripts/check_mimag.py    data/SHD_bins_MIMAG_report.csv
 python3 scripts/confirm_rule.py   data/SHD_bins_MIMAG_report.csv
 python3 scripts/summary.py        data/SHD_bins_MIMAG_report.csv
 
-# the figure
+# the figures
 python3 scripts/plot_quality_by_sample.py \
     data/SHD_bins_MIMAG_report.csv \
     figures/quality_by_sample.png \
     figures/quality_by_sample_dark.png \
     figures/quality_by_sample.csv
+
+python3 scripts/plot_quality_by_taxonomy.py \
+    data/SHD_bins_MIMAG_report.csv \
+    figures/quality_by_taxonomy.png \
+    figures/quality_by_taxonomy_dark.png \
+    figures/quality_by_taxonomy.csv
 ```
 
 ## MAG recovery per dog
@@ -56,3 +62,18 @@ Recovery is very uneven — 4 to 108 MAGs per sample, median 46 — but the
 high-quality share stays fairly stable (50–100%, median 74%) and barely tracks
 total yield (r = −0.27). The low-yield dogs are producing *fewer* genomes, not
 systematically worse ones.
+
+## Genome quality by phylum
+
+![Genome quality by phylum, counts and share](figures/quality_by_taxonomy.png)
+
+All 2,676 MAGs are Bacteria, spread over 11 GTDB phyla, and the counts are
+lopsided: Bacillota_A alone is 1,460 of them (55%), while three phyla have five
+MAGs or fewer. Phylum is assigned for every row, so nothing folds into "Other".
+
+Quality is remarkably flat across the tree — every phylum with a meaningful
+sample size sits between 62% and 82% high-quality. **Fusobacteriota (62%) and
+Campylobacterota (66%) are the weak ends**, and the dominant Bacillota_A (70%)
+is also below the dataset average of 73%, so the phyla that bin most easily are
+not the ones that bin best. The three single-digit phyla
+(Bacillota_B, Desulfobacterota, Deferribacterota) should be read as anecdotes.
