@@ -219,6 +219,50 @@ closed = df[df["Nr contigs"] == 1]          #  691 — single-contig genomes
 novel = df[df["GTDBtk fastani Ref"] == "0"] #  470 — no GTDB species match
 ```
 
+## Companion table: `data/ARGs/SHD1_ARGs_MAGs.csv.gz`
+
+RGI/CARD antimicrobial-resistance gene calls for the same MAGs, from
+[Zenodo record 16356977](https://zenodo.org/records/16356977). 2.9 MB gzipped,
+13 MB open; 4,702 rows × 34 columns. Original filename inside the archive is
+`RGI_ARGs-MAGs.csv`.
+
+**Grain: one row per detected ARG ORF**, not per MAG. 4,702 hits over 1,591
+MAGs, 210 distinct `Best_Hit_ARO` values.
+
+Joining it to the MIMAG report has two traps:
+
+1. **Join on `Original ID`, not `Bin ID`.** Both files have a `Bin ID` column,
+   but the ARG file drops the suffix: `SHD1_2081` there against
+   `SHD1_2081.fna.gz` here. A direct `Bin ID` merge matches **zero** rows and
+   fails silently. `Original ID` matches 1,591/1,591 exactly.
+2. **It must be a LEFT join from the MAG table.** 1,085 of the 2,676 MAGs (41%)
+   carry no ARG and are therefore *absent from the file entirely*. An inner join
+   drops them — and because every dropped row is a zero, every count, mean and
+   correlation computed afterwards is biased upward.
+
+```python
+per_mag = args.groupby("Original ID").agg(args=("ORF_ID", "size"))
+d = mags.merge(per_mag, on="Original ID", how="left").fillna({"args": 0})
+```
+
+Other notes on the file:
+
+- `Cut_Off` is `Strict` (3,728) or `Perfect` (974). **No `Loose` calls**, so the
+  usual RGI confidence filter is already applied upstream — do not re-filter and
+  report it as your own QC. 78 rows carry `Nudged == True` (Loose promoted to
+  Strict by RGI's own nudging).
+- `ORF_ID` is unique across all 4,702 rows and embeds an absolute path from the
+  original analysis (`/data/anna/animal_metagenome/long-mg-dog/...`), which is
+  the only place the contributor's directory layout appears.
+- `Quality` is duplicated from the MIMAG report and agrees with it, so it is safe
+  to ignore in favour of the authoritative column.
+- Counting rows per MAG and counting *distinct* `Best_Hit_ARO` per MAG differ for
+  289 MAGs — those carry the same gene more than once. Pick deliberately: hits
+  measure copies, distinct AROs measure repertoire.
+- Three heavy columns (`Predicted_DNA`, `Predicted_Protein`,
+  `CARD_Protein_Sequence`) hold full sequences and are most of the file size.
+  Pass `usecols=` or the read is needlessly slow.
+
 ## Open questions for Luis
 
 Things that genuinely cannot be determined from the files:
